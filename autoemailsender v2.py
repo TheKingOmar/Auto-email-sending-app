@@ -8,6 +8,7 @@ from pathlib import Path
 from google.auth.transport.requests import Request
 from quickstart import main as authenticate_gmail
 import json
+import string
 class Emailsender:
     def __init__(self):
         # Set up the main application window
@@ -18,7 +19,6 @@ class Emailsender:
         for i in range(4):
             self.window.grid_columnconfigure(i, weight=1)
             self.window.grid_rowconfigure(0, weight=1)
-        self.template_parse()
         #frames
         self.variable_frame = ctk.CTkFrame(self.window, fg_color=("white", "#1e1e1e"), corner_radius=16, border_width=1, border_color="#333")
         self.variable_frame.grid(pady=10, padx=10, sticky="nsew", row=0, column=1)
@@ -31,6 +31,7 @@ class Emailsender:
         self.timeframe_integer = ctk.IntVar()
         self.issue_vars = {}  
         self.auth_var = ctk.BooleanVar(value=False)
+        self.entry_list = []
         #buttons
         self.auth_button = ctk.CTkButton(
             self.setup_frame, text="Authenticate", command=self.authenticate,
@@ -52,6 +53,13 @@ class Emailsender:
                          fg_color="#2563eb", hover_color="#1d4ed8",
                          font=ctk.CTkFont(size=14, weight="bold")
         )
+        self.load_json_button = ctk.CTkButton(
+            self.setup_frame, text="Load Templates", command=self.template_parse,
+                          height=42, corner_radius=12,
+                         fg_color="#2563eb", hover_color="#1d4ed8",
+                         font=ctk.CTkFont(size=14, weight="bold")
+        )
+        self.load_json_button.grid(pady=10, padx=5, row=5, column=0, sticky="ew")
         self.message_button.grid(pady=10, padx=10, row=6, column=0, columnspan=3, sticky="ew")
         self.message_button.configure(state="disabled")
         #entries
@@ -60,16 +68,7 @@ class Emailsender:
                            height=36, corner_radius=10, border_width=1)
         self.email_entry.grid(pady=10, padx=5, row=1, column=0, sticky="ew")
         #menus
-        self.menu_list = []
-        for i, param in enumerate(self.param_list):
-            if param[0] == 'subject':
-                del param[0]
-            param_menu = ctk.CTkOptionMenu(self.variable_frame, values=param,
-                         corner_radius=10,
-                         button_color="#2563eb", button_hover_color="#1d4ed8", fg_color="#2563eb",
-                         )
-            param_menu.grid(pady=5, padx=5, row=0+i, column=0, sticky="ew")
-            self.menu_list.append(param_menu)
+        self.menu_list = []    
         #labels
         self.email_label = ctk.CTkLabel(self.setup_frame, text="Enter Email Address:", font=ctk.CTkFont(size=20, weight="bold"),text_color=("black", "white"))
         self.email_label.grid(pady=10, padx=5, row = 0, column=0)
@@ -80,6 +79,18 @@ class Emailsender:
         self.message_status_label = ctk.CTkLabel(self.window, text="")
         self.message_status_label.grid(pady=(0, 10), padx=10, row=4, column=1, columnspan=3, sticky="w")
         self.message = ""
+    def extract_placeholders(text: str) -> list[str]:
+       fmt = string.Formatter()
+       seen = set()
+       out = []
+       for literal, field_name, format_spec, conversion in fmt.parse(text):
+          if field_name:  # None or "" means no field here
+            # field_name might contain indexing like "user.name" or "items[0]"
+            base = field_name.split("!")[0].split(":")[0]
+            if base not in seen:
+                seen.add(base)
+                out.append(base)
+       return out
     def template_parse(self):
         if not Path("templates.json").exists():
             Path("templates.json").write_text(json.dumps({}))
@@ -92,7 +103,35 @@ class Emailsender:
              keys = list(current.keys())       
              self.param_list.append(keys)       
              first_key = keys[0]               
-             current = current[first_key]       
+             current = current[first_key] 
+        for i, param in enumerate(self.param_list):
+            if param[0] == 'subject' or param[0] == 'body':
+                return
+            param_menu = ctk.CTkOptionMenu(self.variable_frame, values=param,
+                         corner_radius=10,
+                         button_color="#2563eb", button_hover_color="#1d4ed8", fg_color="#2563eb",
+                         )
+            param_menu.grid(pady=5, padx=5, row=0+i, column=0, sticky="ew")
+            self.menu_list.append(param_menu)
+    def update_message(self):
+        current = self.message_template
+        for menu in self.menu_list:
+            current = current[menu.get()]
+        self.message_temp = current['body'] if 'body' in current else ""
+        self.subject_temp = current['subject'] if 'subject' in current else ""
+        vars = Emailsender.extract_placeholders(self.message_temp)
+        for i in range(len(vars)):
+                   entry = ctk.CTkEntry(self.variable_frame, placeholder_text=f"Enter {vars[i]}",
+                           placeholder_text_color="gray",
+                           height=36, corner_radius=10, border_width=1)
+                   entry.grid(pady=5, padx=5, row=0+i, column=1, sticky="ew")
+                   self.entry_list.append(entry)
+        self.var_entries = dict(zip(vars, self.entry_list))
+    def render_message(self):
+        values = {k: e.get().strip() for k, e in self.var_entries.items()}
+        values = SafeDict(values)
+        self.subject = self.subject_temp.format_map(values)
+        self.message = self.message_temp.format_map(values)
     def authenticate(self):
         SCOPES = ['https://www.googleapis.com/auth/gmail.send']
         self.creds = None
@@ -148,17 +187,8 @@ class Emailsender:
 
         return sent_message
     def message_setup(self):
-        current = self.message_template
-        current_subject = self.message_template
-        for menu in self.menu_list:
-            current = current[menu.get()]
-        for menu in self.menu_list:
-            if menu.get() == 'subject' or menu.get() == 'body':
-                current_subject = current_subject['subject']
-                break
-            current_subject = current_subject[menu.get()]
-        self.message = current
-        self.subject = current_subject
+        self.update_message()
+        self.render_message()
         self.message_textbox.configure(state="normal")
         self.message_status_label.configure(text="Message generated! Review and click 'Send Email'.", text_color="green")
         self.message_textbox.delete("1.0", "end")
@@ -168,7 +198,9 @@ class Emailsender:
 
     def run(self):
         self.window.mainloop()
-
+class SafeDict(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"  
 
 if __name__ == "__main__":
     app = Emailsender()
